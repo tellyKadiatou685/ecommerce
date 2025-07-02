@@ -1,0 +1,54 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+android {
+    namespace = "com.example.ecommerce"
+    // 🔥 FORCER LE SDK 35 pour compatibility avec flutter_plugin_android_lifecycle
+    compileSdk = 35
+    ndkVersion = flutter.ndkVersion
+    
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"  // 🔥 CORRECTION: utiliser string au lieu de JavaVersion
+    }
+
+    defaultConfig {
+        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        applicationId = "com.example.ecommerce"
+        // You can update the following values to match your application needs.
+        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        minSdk = 24  // 🔥 CHANGÉ: SDK minimum pour flutter_sound
+        // 🔥 FORCER LE TARGET SDK 35
+        targetSdk = 35
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+        
+        // 🔥 AJOUT: Support pour les gros APKs (nécessaire pour les plugins de médias)
+        multiDexEnabled = true
+    }
+
+    buildTypes {
+        release {
+            // TODO: Add your own signing config for the release build.
+            // Signing with the debug keys for now, so `flutter run --release` works.
+            signingConfig = signingConfigs.debug
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}
+
+dependencies {
+    // 🔥 AJOUT: Support MultiDex si nécessaire
+    implementation 'androidx.multidex:multidex:2.0.1'
+}

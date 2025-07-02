@@ -1,0 +1,35 @@
+name: ecommerce
+description: "A new Flutter project."
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.1.0
+  shared_preferences: ^2.0.15  # Version plus ancienne
+  cupertino_icons: ^1.0.8
+  image_picker: ^1.1.2  # Pour sélectionner photos/vidéos
+  file_picker: ^10.2.0
+  flutter_sound: ^9.2.13
+  path_provider: ^2.1.1
+  record: ^5.0.4
+  permission_handler: ^12.0.0+1
+  audioplayers: ^5.2.1     # Pour lire
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  
+  # ✅ ASSETS CORRECTEMENT PLACÉS ICI :
+  assets:
+    - assets/images/hero/
