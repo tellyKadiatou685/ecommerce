@@ -1,8 +1,10 @@
-// lib/services/notification_service.dart - SUPPRESSION CORRIGÉE
+// lib/services/notification_service.dart - SERVICE FINAL CORRIGÉ
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/status.dart' as status;
 import '../models/notification_model.dart';
 import '../services/api_config.dart';
 import '../services/auth_service.dart';
@@ -21,10 +23,18 @@ class NotificationService extends ChangeNotifier {
   final StreamController<List<AppNotification>> _notificationsController = 
       StreamController<List<AppNotification>>.broadcast();
 
+  // 🔌 WEBSOCKET NATIF
+  WebSocketChannel? _websocketChannel;
+  bool _isConnected = false;
+  Timer? _reconnectTimer;
+  int _reconnectAttempts = 0;
+  static const int _maxReconnectAttempts = 5;
+
   // 📡 GETTERS
   List<AppNotification> get notifications => _notifications;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+  bool get isConnected => _isConnected;
   
   /// Stream des notifications pour écouter les changements
   Stream<List<AppNotification>> get notificationsStream => _notificationsController.stream;
@@ -43,7 +53,143 @@ class NotificationService extends ChangeNotifier {
   List<AppNotification> get recentNotifications => 
       _notifications.where((n) => n.isRecent).toList();
 
-  /// 📥 RÉCUPÉRER TOUTES LES NOTIFICATIONS (VERSION TEST)
+  // 🚀 INITIALISATION DU SERVICE
+  Future<void> initialize() async {
+    print('🚀 [NOTIFICATION_SERVICE] Initialisation avec WebSocket temps réel...');
+    await getNotifications();
+    await _connectWebSocket();
+  }
+
+  // 🔌 CONNEXION WEBSOCKET NATIF
+  Future<void> _connectWebSocket() async {
+    try {
+      final token = await AuthService().getToken();
+      if (token == null) {
+        print('❌ [NOTIFICATION_SERVICE] Pas de token disponible pour WebSocket');
+        return;
+      }
+
+      // Construire l'URL WebSocket avec authentification
+      final wsUrl = '${ApiConfig.socketUrl}/ws?token=$token';
+      
+      print('🔌 [NOTIFICATION_SERVICE] Connexion WebSocket à: $wsUrl');
+      
+      _websocketChannel = WebSocketChannel.connect(Uri.parse(wsUrl));
+
+      // Écouter les messages WebSocket
+      _websocketChannel!.stream.listen(
+        (message) {
+          print('📨 [NOTIFICATION_SERVICE] Message WebSocket reçu: $message');
+          _handleWebSocketMessage(message);
+        },
+        onError: (error) {
+          print('❌ [NOTIFICATION_SERVICE] Erreur WebSocket: $error');
+          _handleWebSocketError(error);
+        },
+        onDone: () {
+          print('❌ [NOTIFICATION_SERVICE] WebSocket fermé');
+          _handleWebSocketDisconnection();
+        },
+      );
+
+      // Confirmer la connexion
+      _isConnected = true;
+      _reconnectAttempts = 0;
+      notifyListeners();
+      print('✅ [NOTIFICATION_SERVICE] WebSocket connecté avec succès');
+
+    } catch (e) {
+      print('❌ [NOTIFICATION_SERVICE] Erreur connexion WebSocket: $e');
+      _handleWebSocketError(e);
+    }
+  }
+
+  // 📨 GÉRER LES MESSAGES WEBSOCKET
+  void _handleWebSocketMessage(dynamic message) {
+    try {
+      final data = json.decode(message);
+      final type = data['type'];
+      final payload = data['payload'];
+
+      switch (type) {
+        case 'new_notification':
+          print('🔔 [NOTIFICATION_SERVICE] Nouvelle notification temps réel');
+          final notification = AppNotification.fromJson(payload);
+          _addNewNotification(notification);
+          break;
+
+        case 'notification_updated':
+          print('🔄 [NOTIFICATION_SERVICE] Notification mise à jour temps réel');
+          final notification = AppNotification.fromJson(payload);
+          _updateNotification(notification);
+          break;
+
+        case 'notification_deleted':
+          print('🗑️ [NOTIFICATION_SERVICE] Notification supprimée temps réel');
+          final notificationId = payload['id'];
+          _removeNotification(notificationId);
+          break;
+
+        case 'notifications_bulk_updated':
+          print('🔄 [NOTIFICATION_SERVICE] Mise à jour en masse des notifications');
+          // Recharger toutes les notifications
+          getNotifications(forceRefresh: true);
+          break;
+
+        case 'notifications_bulk_deleted':
+          print('🗑️ [NOTIFICATION_SERVICE] Suppression en masse des notifications');
+          _notifications.clear();
+          _notificationsController.add(_notifications);
+          notifyListeners();
+          break;
+
+        case 'ping':
+          // Répondre au ping pour maintenir la connexion
+          _websocketChannel?.sink.add(json.encode({'type': 'pong'}));
+          break;
+
+        default:
+          print('🤔 [NOTIFICATION_SERVICE] Type de message inconnu: $type');
+      }
+    } catch (e) {
+      print('❌ [NOTIFICATION_SERVICE] Erreur parsing message WebSocket: $e');
+    }
+  }
+
+  // ❌ GÉRER LES ERREURS WEBSOCKET
+  void _handleWebSocketError(dynamic error) {
+    _isConnected = false;
+    notifyListeners();
+    
+    if (_reconnectAttempts < _maxReconnectAttempts) {
+      _scheduleReconnect();
+    } else {
+      print('❌ [NOTIFICATION_SERVICE] Nombre maximum de tentatives de reconnexion atteint');
+    }
+  }
+
+  // 🔄 GÉRER LA DÉCONNEXION WEBSOCKET
+  void _handleWebSocketDisconnection() {
+    _isConnected = false;
+    notifyListeners();
+    _scheduleReconnect();
+  }
+
+  // ⏰ PROGRAMMER UNE RECONNEXION
+  void _scheduleReconnect() {
+    _reconnectTimer?.cancel();
+    
+    final delay = Duration(seconds: 2 * (_reconnectAttempts + 1)); // Délai progressif
+    _reconnectAttempts++;
+    
+    print('🔄 [NOTIFICATION_SERVICE] Reconnexion dans ${delay.inSeconds}s (tentative $_reconnectAttempts)');
+    
+    _reconnectTimer = Timer(delay, () {
+      _connectWebSocket();
+    });
+  }
+
+  // 📥 RÉCUPÉRER TOUTES LES NOTIFICATIONS DEPUIS L'API
   Future<List<AppNotification>> getNotifications({bool forceRefresh = false}) async {
     if (_notifications.isNotEmpty && !forceRefresh) {
       return _notifications;
@@ -53,159 +199,157 @@ class NotificationService extends ChangeNotifier {
       _setLoading(true);
       _setError(null);
 
-      // 🧪 SIMULER UN APPEL API AVEC DES DONNÉES DE TEST
-      await Future.delayed(const Duration(seconds: 1));
+      final token = await AuthService().getToken();
+      if (token == null) {
+        throw NotificationException('Token d\'authentification manquant', 'NO_TOKEN');
+      }
 
-      _notifications = [
-        AppNotification(
-          id: 1,
-          title: 'Commande confirmée',
-          message: 'Votre commande #ORD-2024-001 a été confirmée par le marchand Boutique Diallo.',
-          type: NotificationType.order,
-          isRead: false,
-          createdAt: DateTime.now().subtract(const Duration(minutes: 30)),
-          updatedAt: DateTime.now(),
-          data: {'order_id': 'ORD-2024-001'},
-        ),
-        AppNotification(
-          id: 2,
-          title: 'Nouveau message',
-          message: 'Vous avez reçu un nouveau message de Marie Thiam concernant votre commande.',
-          type: NotificationType.message,
-          isRead: false,
-          createdAt: DateTime.now().subtract(const Duration(hours: 2)),
-          updatedAt: DateTime.now(),
-          data: {'conversation_id': 123},
-        ),
-        AppNotification(
-          id: 3,
-          title: 'Livraison en cours',
-          message: 'Votre commande #ORD-2024-002 est en cours de livraison. Suivez-la en temps réel.',
-          type: NotificationType.shipping,
-          isRead: true,
-          createdAt: DateTime.now().subtract(const Duration(hours: 5)),
-          updatedAt: DateTime.now(),
-          data: {'order_id': 'ORD-2024-002', 'tracking_code': 'TRK001'},
-        ),
-        AppNotification(
-          id: 4,
-          title: 'Paiement reçu',
-          message: 'Votre paiement de 125,000 FCFA pour la commande #ORD-2024-003 a été confirmé.',
-          type: NotificationType.payment,
-          isRead: true,
-          createdAt: DateTime.now().subtract(const Duration(hours: 8)),
-          updatedAt: DateTime.now(),
-          data: {'amount': 125000, 'order_id': 'ORD-2024-003'},
-        ),
-        AppNotification(
-          id: 5,
-          title: 'Offre spéciale - 20% de réduction !',
-          message: 'Profitez de 20% de réduction sur tous les produits électroniques jusqu\'à dimanche.',
-          type: NotificationType.promotion,
-          isRead: false,
-          createdAt: DateTime.now().subtract(const Duration(days: 1)),
-          updatedAt: DateTime.now(),
-          data: {'discount': 20, 'category': 'electronics', 'expires_at': '2024-12-31'},
-        ),
-        AppNotification(
-          id: 6,
-          title: 'Mise à jour système',
-          message: 'L\'application a été mise à jour avec de nouvelles fonctionnalités. Découvrez-les !',
-          type: NotificationType.system,
-          isRead: true,
-          createdAt: DateTime.now().subtract(const Duration(days: 2)),
-          updatedAt: DateTime.now(),
-          data: {'version': '2.1.0'},
-        ),
-        AppNotification(
-          id: 7,
-          title: 'Commande expédiée',
-          message: 'Votre commande #ORD-2024-004 a été expédiée et arrivera demain matin.',
-          type: NotificationType.shipping,
-          isRead: false,
-          createdAt: DateTime.now().subtract(const Duration(days: 1, hours: 3)),
-          updatedAt: DateTime.now(),
-          data: {'order_id': 'ORD-2024-004', 'estimated_delivery': '2024-12-25'},
-        ),
-      ];
-      
-      // Trier par date de création (plus récent en premier)
-      _notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      
-      _notificationsController.add(_notifications);
-      notifyListeners();
-      
-      print('✅ [NOTIFICATION_SERVICE] ${_notifications.length} notifications de test chargées');
-      return _notifications;
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/notifications'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 10));
 
-    } catch (e) {
-      print('💥 [NOTIFICATION_SERVICE] Erreur lors du chargement des données de test: $e');
-      final error = NotificationException('Erreur lors du chargement: ${e.toString()}', 'TEST_ERROR');
+      if (response.statusCode == 200) {
+        final List<dynamic> notificationsJson = json.decode(response.body);
+        _notifications = notificationsJson
+            .map((json) => AppNotification.fromJson(json))
+            .toList();
+        
+        // Trier par date de création (plus récent en premier)
+        _notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        
+        _notificationsController.add(_notifications);
+        notifyListeners();
+        
+        print('✅ [NOTIFICATION_SERVICE] ${_notifications.length} notifications chargées depuis l\'API');
+        return _notifications;
+      } else {
+        final errorMessage = _getErrorMessage(response.statusCode, response.body);
+        throw NotificationException(errorMessage, 'API_ERROR');
+      }
+
+    } on TimeoutException {
+      final error = NotificationException('Délai d\'attente dépassé', 'TIMEOUT');
       _setError(error.message);
       throw error;
+    } catch (e) {
+      print('💥 [NOTIFICATION_SERVICE] Erreur lors du chargement: $e');
+      if (e is! NotificationException) {
+        final error = NotificationException('Erreur lors du chargement: ${e.toString()}', 'NETWORK_ERROR');
+        _setError(error.message);
+        throw error;
+      }
+      _setError(e.message);
+      rethrow;
     } finally {
       _setLoading(false);
     }
   }
 
-  /// ✅ MARQUER UNE NOTIFICATION COMME LUE (VERSION LOCALE)
+  /// ✅ MARQUER UNE NOTIFICATION COMME LUE
   Future<void> markAsRead(int notificationId) async {
     try {
-      print('🔄 [NOTIFICATION_SERVICE] Marking notification $notificationId as read (LOCAL)');
+      print('🔄 [NOTIFICATION_SERVICE] Marking notification $notificationId as read');
       
-      // 🔧 MISE À JOUR LOCALE POUR LES DONNÉES DE TEST
-      final index = _notifications.indexWhere((n) => n.id == notificationId);
-      if (index != -1) {
-        _notifications[index] = _notifications[index].copyWith(isRead: true);
-        _notificationsController.add(_notifications);
-        notifyListeners();
-        print('✅ [NOTIFICATION_SERVICE] Notification $notificationId marquée comme lue localement');
+      final token = await AuthService().getToken();
+      if (token == null) {
+        throw NotificationException('Token d\'authentification manquant', 'NO_TOKEN');
+      }
+
+      final response = await http.patch(
+        Uri.parse('${ApiConfig.baseUrl}/notifications/$notificationId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final updatedNotification = AppNotification.fromJson(json.decode(response.body));
+        _updateNotificationLocally(updatedNotification);
+        print('✅ [NOTIFICATION_SERVICE] Notification $notificationId marquée comme lue');
       } else {
-        print('❌ [NOTIFICATION_SERVICE] Notification $notificationId non trouvée');
+        final errorMessage = _getErrorMessage(response.statusCode, response.body);
+        throw NotificationException(errorMessage, 'MARK_READ_ERROR');
       }
     } catch (e) {
       print('❌ [NOTIFICATION_SERVICE] Erreur mark as read: $e');
-      throw NotificationException('Erreur lors du marquage: ${e.toString()}', 'MARK_READ_ERROR');
+      if (e is! NotificationException) {
+        throw NotificationException('Erreur lors du marquage: ${e.toString()}', 'MARK_READ_ERROR');
+      }
+      rethrow;
     }
   }
 
-  /// ✅ MARQUER TOUTES LES NOTIFICATIONS COMME LUES (VERSION LOCALE)
+  /// ✅ MARQUER TOUTES LES NOTIFICATIONS COMME LUES
   Future<void> markAllAsRead() async {
     try {
       _setLoading(true);
       
-      print('🔄 [NOTIFICATION_SERVICE] Marking all notifications as read (LOCAL)');
+      print('🔄 [NOTIFICATION_SERVICE] Marking all notifications as read');
       
-      // 🔧 MISE À JOUR LOCALE
-      _notifications = _notifications.map((n) => n.copyWith(isRead: true)).toList();
-      _notificationsController.add(_notifications);
-      notifyListeners();
-      
-      print('✅ [NOTIFICATION_SERVICE] Toutes les notifications marquées comme lues');
+      final token = await AuthService().getToken();
+      if (token == null) {
+        throw NotificationException('Token d\'authentification manquant', 'NO_TOKEN');
+      }
+
+      final response = await http.patch(
+        Uri.parse('${ApiConfig.baseUrl}/notifications'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        // Mettre à jour localement toutes les notifications
+        _notifications = _notifications.map((n) => n.copyWith(isRead: true)).toList();
+        _notificationsController.add(_notifications);
+        notifyListeners();
+        
+        print('✅ [NOTIFICATION_SERVICE] Toutes les notifications marquées comme lues');
+      } else {
+        final errorMessage = _getErrorMessage(response.statusCode, response.body);
+        throw NotificationException(errorMessage, 'MARK_ALL_READ_ERROR');
+      }
     } catch (e) {
       print('❌ [NOTIFICATION_SERVICE] Erreur mark all as read: $e');
-      throw NotificationException('Erreur lors du marquage: ${e.toString()}', 'MARK_ALL_READ_ERROR');
+      if (e is! NotificationException) {
+        throw NotificationException('Erreur lors du marquage: ${e.toString()}', 'MARK_ALL_READ_ERROR');
+      }
+      rethrow;
     } finally {
       _setLoading(false);
     }
   }
 
-  /// 🗑️ SUPPRIMER UNE NOTIFICATION (VERSION LOCALE CORRIGÉE)
+  /// 🗑️ SUPPRIMER UNE NOTIFICATION
   Future<void> deleteNotification(int notificationId) async {
     try {
-      print('🗑️ [NOTIFICATION_SERVICE] Deleting notification $notificationId (LOCAL)');
+      print('🗑️ [NOTIFICATION_SERVICE] Deleting notification $notificationId');
       
-      // 🔧 SUPPRESSION LOCALE POUR LES DONNÉES DE TEST
-      final initialLength = _notifications.length;
-      _notifications.removeWhere((n) => n.id == notificationId);
-      
-      if (_notifications.length < initialLength) {
-        _notificationsController.add(_notifications);
-        notifyListeners();
-        print('✅ [NOTIFICATION_SERVICE] Notification $notificationId supprimée localement');
+      final token = await AuthService().getToken();
+      if (token == null) {
+        throw NotificationException('Token d\'authentification manquant', 'NO_TOKEN');
+      }
+
+      final response = await http.delete(
+        Uri.parse('${ApiConfig.baseUrl}/notifications/$notificationId'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        _removeNotificationLocally(notificationId);
+        print('✅ [NOTIFICATION_SERVICE] Notification $notificationId supprimée');
       } else {
-        print('❌ [NOTIFICATION_SERVICE] Notification $notificationId non trouvée pour suppression');
-        throw NotificationException('Notification non trouvée', 'NOT_FOUND');
+        final errorMessage = _getErrorMessage(response.statusCode, response.body);
+        throw NotificationException(errorMessage, 'DELETE_ERROR');
       }
     } catch (e) {
       print('❌ [NOTIFICATION_SERVICE] Erreur delete: $e');
@@ -216,22 +360,42 @@ class NotificationService extends ChangeNotifier {
     }
   }
 
-  /// 🗑️ SUPPRIMER TOUTES LES NOTIFICATIONS (VERSION LOCALE CORRIGÉE)
+  /// 🗑️ SUPPRIMER TOUTES LES NOTIFICATIONS
   Future<void> deleteAllNotifications() async {
     try {
       _setLoading(true);
       
-      print('🗑️ [NOTIFICATION_SERVICE] Deleting all notifications (LOCAL)');
+      print('🗑️ [NOTIFICATION_SERVICE] Deleting all notifications');
       
-      // 🔧 SUPPRESSION LOCALE
-      _notifications.clear();
-      _notificationsController.add(_notifications);
-      notifyListeners();
-      
-      print('✅ [NOTIFICATION_SERVICE] Toutes les notifications supprimées');
+      final token = await AuthService().getToken();
+      if (token == null) {
+        throw NotificationException('Token d\'authentification manquant', 'NO_TOKEN');
+      }
+
+      final response = await http.delete(
+        Uri.parse('${ApiConfig.baseUrl}/notifications'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        _notifications.clear();
+        _notificationsController.add(_notifications);
+        notifyListeners();
+        
+        print('✅ [NOTIFICATION_SERVICE] Toutes les notifications supprimées');
+      } else {
+        final errorMessage = _getErrorMessage(response.statusCode, response.body);
+        throw NotificationException(errorMessage, 'DELETE_ALL_ERROR');
+      }
     } catch (e) {
       print('❌ [NOTIFICATION_SERVICE] Erreur delete all: $e');
-      throw NotificationException('Erreur lors de la suppression: ${e.toString()}', 'DELETE_ALL_ERROR');
+      if (e is! NotificationException) {
+        throw NotificationException('Erreur lors de la suppression: ${e.toString()}', 'DELETE_ALL_ERROR');
+      }
+      rethrow;
     } finally {
       _setLoading(false);
     }
@@ -245,7 +409,7 @@ class NotificationService extends ChangeNotifier {
 
   /// 📋 FILTRER LES NOTIFICATIONS PAR TYPE
   List<AppNotification> getNotificationsByType(NotificationType type) {
-    return _notifications.where((n) => n.type == type).toList();
+    return _notifications.where((n) => n.notificationType == type).toList();
   }
 
   /// 🔍 CHERCHER DANS LES NOTIFICATIONS
@@ -271,6 +435,46 @@ class NotificationService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _addNewNotification(AppNotification notification) {
+    _notifications.insert(0, notification); // Ajouter en première position
+    _notificationsController.add(_notifications);
+    notifyListeners();
+  }
+
+  void _updateNotification(AppNotification notification) {
+    final index = _notifications.indexWhere((n) => n.id == notification.id);
+    if (index != -1) {
+      _notifications[index] = notification;
+      _notificationsController.add(_notifications);
+      notifyListeners();
+    }
+  }
+
+  void _updateNotificationLocally(AppNotification notification) {
+    final index = _notifications.indexWhere((n) => n.id == notification.id);
+    if (index != -1) {
+      _notifications[index] = notification;
+      _notificationsController.add(_notifications);
+      notifyListeners();
+    }
+  }
+
+  void _removeNotification(int notificationId) {
+    _notifications.removeWhere((n) => n.id == notificationId);
+    _notificationsController.add(_notifications);
+    notifyListeners();
+  }
+
+  void _removeNotificationLocally(int notificationId) {
+    final initialLength = _notifications.length;
+    _notifications.removeWhere((n) => n.id == notificationId);
+    
+    if (_notifications.length < initialLength) {
+      _notificationsController.add(_notifications);
+      notifyListeners();
+    }
+  }
+
   String _getErrorMessage(int statusCode, String responseBody) {
     switch (statusCode) {
       case 401:
@@ -294,6 +498,8 @@ class NotificationService extends ChangeNotifier {
   // 🧹 NETTOYAGE
   @override
   void dispose() {
+    _websocketChannel?.sink.close(status.goingAway);
+    _reconnectTimer?.cancel();
     _notificationsController.close();
     super.dispose();
   }
@@ -303,6 +509,8 @@ class NotificationService extends ChangeNotifier {
     _notifications.clear();
     _isLoading = false;
     _errorMessage = null;
+    _websocketChannel?.sink.close(status.goingAway);
+    _reconnectTimer?.cancel();
     _notificationsController.add(_notifications);
     notifyListeners();
   }
@@ -312,7 +520,7 @@ class NotificationService extends ChangeNotifier {
     final stats = <String, int>{};
     
     for (final type in NotificationType.values) {
-      stats[type.name] = _notifications.where((n) => n.type == type).length;
+      stats[type.name] = _notifications.where((n) => n.notificationType == type).length;
     }
     
     stats['total'] = totalCount;
@@ -320,5 +528,19 @@ class NotificationService extends ChangeNotifier {
     stats['recent'] = recentNotifications.length;
     
     return stats;
+  }
+
+  /// 🔌 DÉCONNECTER LE WEBSOCKET
+  void disconnectSocket() {
+    _websocketChannel?.sink.close(status.goingAway);
+    _isConnected = false;
+    notifyListeners();
+  }
+
+  /// 🔌 RECONNECTER LE WEBSOCKET
+  Future<void> reconnectSocket() async {
+    print('🔄 [NOTIFICATION_SERVICE] Reconnexion manuelle du WebSocket...');
+    _reconnectAttempts = 0;
+    await _connectWebSocket();
   }
 }

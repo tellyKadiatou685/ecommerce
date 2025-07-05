@@ -2,10 +2,12 @@
 class ApiConfig {
   // 🔥 VOTRE IP CORRECTE CONFIRMÉE
   static const String baseUrl = 'http://192.168.1.19:3001';
+  static const String socketUrl = 'ws://http://192.168.1.19:3001';
   static const String apiPath = '/api/auth';
   
   // 🔥 NOUVEAUX ENDPOINTS POUR LES MESSAGES
   static const String messagesApiPath = '/api/messages';
+  static const String notifications = '/notifications';
   
   // 🔥 AJOUT POUR LES PRODUITS
   static const String productsApiPath = '/api/products';

@@ -22,7 +22,6 @@ class _NotificationPageState extends State<NotificationPage> {
   String _selectedFilter = 'Toutes';
 
   @override
-
   void initState() {
     super.initState();
     _initializeNotifications();
@@ -42,7 +41,8 @@ class _NotificationPageState extends State<NotificationPage> {
     });
 
     try {
-      await _loadNotifications();
+      // Initialiser le service (Socket.IO + données initiales)
+      await _notificationService.initialize();
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -58,26 +58,13 @@ class _NotificationPageState extends State<NotificationPage> {
     }
   }
 
-  Future<void> _loadNotifications() async {
-    try {
-      final notifications = await _notificationService.getNotifications();
-      if (mounted) {
-        setState(() {
-          _notifications = notifications;
-          _errorMessage = null;
-        });
-      }
-    } catch (e) {
-      rethrow;
-    }
-  }
-
   void _setupNotificationsListener() {
     _notificationsSubscription = _notificationService.notificationsStream.listen(
       (notifications) {
         if (mounted) {
           setState(() {
             _notifications = notifications;
+            _errorMessage = null; // Clear error on successful update
           });
         }
       },
@@ -100,6 +87,8 @@ class _NotificationPageState extends State<NotificationPage> {
           return 'Le serveur ne répond pas. Réessayez plus tard.';
         case 'NETWORK_ERROR':
           return 'Pas de connexion internet. Vérifiez votre réseau.';
+        case 'API_ERROR':
+          return 'Erreur du serveur. Réessayez plus tard.';
         default:
           return error.message;
       }
@@ -112,13 +101,13 @@ class _NotificationPageState extends State<NotificationPage> {
       case 'Non lues':
         return _notifications.where((n) => !n.isRead).toList();
       case 'Commandes':
-        return _notifications.where((n) => n.type == NotificationType.order).toList();
+        return _notifications.where((n) => n.notificationType == NotificationType.order).toList();
       case 'Messages':
-        return _notifications.where((n) => n.type == NotificationType.message).toList();
+        return _notifications.where((n) => n.notificationType == NotificationType.message).toList();
       case 'Livraisons':
-        return _notifications.where((n) => n.type == NotificationType.shipping).toList();
+        return _notifications.where((n) => n.notificationType == NotificationType.shipping).toList();
       case 'Promotions':
-        return _notifications.where((n) => n.type == NotificationType.promotion).toList();
+        return _notifications.where((n) => n.notificationType == NotificationType.promotion).toList();
       default: // Toutes
         return _notifications;
     }
@@ -135,6 +124,7 @@ class _NotificationPageState extends State<NotificationPage> {
 
   PreferredSizeWidget _buildAppBar() {
     final unreadCount = _notificationService.unreadCount;
+    final isConnected = _notificationService.isConnected;
     
     return AppBar(
       backgroundColor: AppColors.white,
@@ -170,6 +160,16 @@ class _NotificationPageState extends State<NotificationPage> {
               ),
             ),
           ],
+          const SizedBox(width: 8),
+          // Indicateur de connexion Socket.IO
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: isConnected ? Colors.green : Colors.red,
+              shape: BoxShape.circle,
+            ),
+          ),
         ],
       ),
       centerTitle: false,
@@ -188,11 +188,40 @@ class _NotificationPageState extends State<NotificationPage> {
         PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert, color: AppColors.gray600),
           onSelected: (value) {
-            if (value == 'delete_all') {
-              _showDeleteAllConfirmation();
+            switch (value) {
+              case 'delete_all':
+                _showDeleteAllConfirmation();
+                break;
+              case 'refresh':
+                _refreshNotifications();
+                break;
+              case 'reconnect':
+                _reconnectSocket();
+                break;
             }
           },
           itemBuilder: (context) => [
+            const PopupMenuItem(
+              value: 'refresh',
+              child: Row(
+                children: [
+                  Icon(Icons.refresh, color: AppColors.gray600),
+                  SizedBox(width: 8),
+                  Text('Actualiser'),
+                ],
+              ),
+            ),
+            if (!isConnected)
+              const PopupMenuItem(
+                value: 'reconnect',
+                child: Row(
+                  children: [
+                    Icon(Icons.wifi, color: Colors.orange),
+                    SizedBox(width: 8),
+                    Text('Reconnecter'),
+                  ],
+                ),
+              ),
             const PopupMenuItem(
               value: 'delete_all',
               child: Row(
@@ -323,9 +352,9 @@ class _NotificationPageState extends State<NotificationPage> {
                                     size: 16,
                                     color: AppColors.gray500,
                                   ),
-                                  onSelected: (value) {
+                                  onSelected: (value) async {
                                     if (value == 'mark_read' && !notification.isRead) {
-                                      _markAsRead(notification.id);
+                                      await _markAsRead(notification.id);
                                     } else if (value == 'delete') {
                                       _showDeleteConfirmation(notification);
                                     }
@@ -378,7 +407,7 @@ class _NotificationPageState extends State<NotificationPage> {
                                 color: AppColors.gray500,
                               ),
                             ),
-                            _buildNotificationTypeBadge(notification.type),
+                            _buildNotificationTypeBadge(notification.notificationType),
                           ],
                         ),
                       ],
@@ -563,20 +592,38 @@ class _NotificationPageState extends State<NotificationPage> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 32),
-            ElevatedButton(
-              onPressed: _initializeNotifications,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryOrange,
-                foregroundColor: AppColors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(25),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: _initializeNotifications,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryOrange,
+                    foregroundColor: AppColors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(25),
+                    ),
+                  ),
+                  child: Text(
+                    'Réessayer',
+                    style: AppTextStyles.buttonText,
+                  ),
                 ),
-              ),
-              child: Text(
-                'Réessayer',
-                style: AppTextStyles.buttonText,
-              ),
+                const SizedBox(width: 16),
+                OutlinedButton(
+                  onPressed: _reconnectSocket,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primaryOrange,
+                    side: const BorderSide(color: AppColors.primaryOrange),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(25),
+                    ),
+                  ),
+                  child: const Text('Reconnecter'),
+                ),
+              ],
             ),
           ],
         ),
@@ -611,43 +658,76 @@ class _NotificationPageState extends State<NotificationPage> {
     }
   }
 
+  Future<void> _reconnectSocket() async {
+    try {
+      await _notificationService.reconnectSocket();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Reconnexion en cours...'),
+            backgroundColor: AppColors.info,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur de reconnexion: ${_getErrorMessage(e)}'),
+            backgroundColor: AppColors.error,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
   void _onNotificationTap(AppNotification notification) {
     // Marquer comme lu si pas encore lu
     if (!notification.isRead) {
       _markAsRead(notification.id);
     }
 
-    // Naviguer selon le type de notification
-    switch (notification.type) {
-      case NotificationType.order:
-        // Naviguer vers les commandes
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Navigation vers les commandes'),
-            backgroundColor: AppColors.info,
-          ),
-        );
-        break;
-      case NotificationType.message:
-        // Naviguer vers les messages
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Navigation vers les messages'),
-            backgroundColor: AppColors.info,
-          ),
-        );
-        break;
-      case NotificationType.shipping:
-        // Naviguer vers le suivi
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Navigation vers le suivi'),
-            backgroundColor: AppColors.info,
-          ),
-        );
-        break;
-      default:
-        break;
+    // Naviguer selon le type de notification ou actionUrl
+    if (notification.actionUrl != null) {
+      // Naviguer vers l'URL d'action si disponible
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Navigation vers: ${notification.actionUrl}'),
+          backgroundColor: AppColors.info,
+        ),
+      );
+    } else {
+      // Naviguer selon le type
+      switch (notification.notificationType) {
+        case NotificationType.order:
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Navigation vers les commandes'),
+              backgroundColor: AppColors.info,
+            ),
+          );
+          break;
+        case NotificationType.message:
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Navigation vers les messages'),
+              backgroundColor: AppColors.info,
+            ),
+          );
+          break;
+        case NotificationType.shipping:
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Navigation vers le suivi'),
+              backgroundColor: AppColors.info,
+            ),
+          );
+          break;
+        default:
+          break;
+      }
     }
   }
 

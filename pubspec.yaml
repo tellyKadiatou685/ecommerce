@@ -12,15 +12,13 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.1.0
-  shared_preferences: ^2.0.15  # Version plus ancienne
+  shared_preferences: ^2.0.15
   cupertino_icons: ^1.0.8
-  image_picker: ^1.1.2  # Pour sélectionner photos/vidéos
-  file_picker: ^10.2.0
-  flutter_sound: ^9.2.13
-  path_provider: ^2.1.1
-  record: ^5.0.4
-  permission_handler: ^12.0.0+1
-  audioplayers: ^5.2.1     # Pour lire
+  image_picker: ^1.1.2        # ✅ GARDER - Pour photos/vidéos
+  file_picker: ^10.2.0       # ✅ GARDER - Pour documents
+  path_provider: ^2.1.1      # ✅ GARDER - Pour chemins fichiers
+  socket_io_client: 1.0.2    # ✅ GARDER - Pour WebSocket
+  web_socket_channel: ^3.0.3 # ✅ GARDER - Pour WebSocket
 
 dev_dependencies:
   flutter_test:
@@ -30,6 +28,5 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   
-  # ✅ ASSETS CORRECTEMENT PLACÉS ICI :
   assets:
     - assets/images/hero/

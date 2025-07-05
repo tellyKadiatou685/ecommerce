@@ -12,36 +12,48 @@ enum NotificationType {
 
 class AppNotification {
   final int id;
-  final String title;
+  final int userId;
+  final String type; // On garde String pour correspondre au backend
   final String message;
-  final NotificationType type;
+  final String? actionUrl;
+  final String? resourceId;
+  final String? resourceType;
+  final int priority;
   final bool isRead;
   final DateTime createdAt;
   final DateTime updatedAt;
-  final Map<String, dynamic>? data; // Données supplémentaires (orderId, etc.)
+  final DateTime? expiresAt;
 
   AppNotification({
     required this.id,
-    required this.title,
-    required this.message,
+    required this.userId,
     required this.type,
+    required this.message,
+    this.actionUrl,
+    this.resourceId,
+    this.resourceType,
+    required this.priority,
     required this.isRead,
     required this.createdAt,
     required this.updatedAt,
-    this.data,
+    this.expiresAt,
   });
 
-  // 🏭 FACTORY DEPUIS JSON
+  // 🏭 FACTORY DEPUIS JSON (Backend)
   factory AppNotification.fromJson(Map<String, dynamic> json) {
     return AppNotification(
       id: json['id'] ?? 0,
-      title: json['title'] ?? '',
+      userId: json['userId'] ?? 0,
+      type: json['type'] ?? 'system',
       message: json['message'] ?? '',
-      type: _parseNotificationType(json['type']),
-      isRead: json['is_read'] ?? false,
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
-      data: json['data'],
+      actionUrl: json['actionUrl'],
+      resourceId: json['resourceId']?.toString(),
+      resourceType: json['resourceType'],
+      priority: json['priority'] ?? 0,
+      isRead: json['isRead'] ?? false,
+      createdAt: DateTime.parse(json['createdAt']),
+      updatedAt: DateTime.parse(json['updatedAt']),
+      expiresAt: json['expiresAt'] != null ? DateTime.parse(json['expiresAt']) : null,
     );
   }
 
@@ -49,44 +61,93 @@ class AppNotification {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'title': title,
+      'userId': userId,
+      'type': type,
       'message': message,
-      'type': type.name,
-      'is_read': isRead,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-      'data': data,
+      'actionUrl': actionUrl,
+      'resourceId': resourceId,
+      'resourceType': resourceType,
+      'priority': priority,
+      'isRead': isRead,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+      'expiresAt': expiresAt?.toIso8601String(),
     };
   }
 
   // 🆕 COPIE AVEC MODIFICATIONS
   AppNotification copyWith({
     int? id,
-    String? title,
+    int? userId,
+    String? type,
     String? message,
-    NotificationType? type,
+    String? actionUrl,
+    String? resourceId,
+    String? resourceType,
+    int? priority,
     bool? isRead,
     DateTime? createdAt,
     DateTime? updatedAt,
-    Map<String, dynamic>? data,
+    DateTime? expiresAt,
   }) {
     return AppNotification(
       id: id ?? this.id,
-      title: title ?? this.title,
-      message: message ?? this.message,
+      userId: userId ?? this.userId,
       type: type ?? this.type,
+      message: message ?? this.message,
+      actionUrl: actionUrl ?? this.actionUrl,
+      resourceId: resourceId ?? this.resourceId,
+      resourceType: resourceType ?? this.resourceType,
+      priority: priority ?? this.priority,
       isRead: isRead ?? this.isRead,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
-      data: data ?? this.data,
+      expiresAt: expiresAt ?? this.expiresAt,
     );
   }
 
   // 📊 GETTERS UTILITAIRES
   
+  /// Convertir le type string en enum
+  NotificationType get notificationType {
+    switch (type.toLowerCase()) {
+      case 'order':
+        return NotificationType.order;
+      case 'message':
+        return NotificationType.message;
+      case 'payment':
+        return NotificationType.payment;
+      case 'shipping':
+        return NotificationType.shipping;
+      case 'promotion':
+        return NotificationType.promotion;
+      case 'system':
+      default:
+        return NotificationType.system;
+    }
+  }
+
+  /// Titre basé sur le type de notification
+  String get title {
+    switch (notificationType) {
+      case NotificationType.order:
+        return 'Commande';
+      case NotificationType.message:
+        return 'Message';
+      case NotificationType.payment:
+        return 'Paiement';
+      case NotificationType.shipping:
+        return 'Livraison';
+      case NotificationType.promotion:
+        return 'Promotion';
+      case NotificationType.system:
+        return 'Système';
+    }
+  }
+
   /// Obtenir l'icône basée sur le type
   IconData get icon {
-    switch (type) {
+    switch (notificationType) {
       case NotificationType.order:
         return Icons.shopping_bag;
       case NotificationType.message:
@@ -104,7 +165,7 @@ class AppNotification {
 
   /// Obtenir la couleur basée sur le type
   Color get color {
-    switch (type) {
+    switch (notificationType) {
       case NotificationType.order:
         return Colors.green;
       case NotificationType.message:
@@ -143,9 +204,15 @@ class AppNotification {
     return difference.inHours < 24;
   }
 
+  /// Vérifier si la notification a expiré
+  bool get isExpired {
+    if (expiresAt == null) return false;
+    return DateTime.now().isAfter(expiresAt!);
+  }
+
   @override
   String toString() {
-    return 'AppNotification(id: $id, title: $title, type: $type, isRead: $isRead)';
+    return 'AppNotification(id: $id, type: $type, isRead: $isRead)';
   }
 
   @override
@@ -156,26 +223,6 @@ class AppNotification {
 
   @override
   int get hashCode => id.hashCode;
-
-  // 🔧 MÉTHODE HELPER POUR PARSER LE TYPE
-  static NotificationType _parseNotificationType(String? typeString) {
-    switch (typeString?.toLowerCase()) {
-      case 'order':
-        return NotificationType.order;
-      case 'message':
-        return NotificationType.message;
-      case 'payment':
-        return NotificationType.payment;
-      case 'shipping':
-        return NotificationType.shipping;
-      case 'promotion':
-        return NotificationType.promotion;
-      case 'system':
-        return NotificationType.system;
-      default:
-        return NotificationType.system;
-    }
-  }
 }
 
 // 📋 CLASSE POUR LES RÉPONSES D'API

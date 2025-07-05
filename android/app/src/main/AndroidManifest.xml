@@ -1,16 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     
-    <!-- 🔥 PERMISSIONS POUR LES MÉDIAS ET FICHIERS -->
+    <!-- 📸 PERMISSIONS POUR LES MÉDIAS ET FICHIERS (SANS AUDIO) -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-   
     
     <!-- Permissions pour Android 13+ (API 33+) -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     
     <!-- Permissions pour l'accès réseau (pour votre API) -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -45,7 +42,7 @@
             </intent-filter>
         </activity>
         
-        <!-- 🔥 PROVIDER POUR LE PARTAGE DE FICHIERS (nécessaire pour image_picker) -->
+        <!-- 📁 PROVIDER POUR LE PARTAGE DE FICHIERS (nécessaire pour image_picker) -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileProvider"
@@ -73,7 +70,7 @@
             <data android:mimeType="text/plain"/>
         </intent>
         
-        <!-- 🔥 QUERIES POUR LES INTENTS DE FICHIERS -->
+        <!-- 📁 QUERIES POUR LES INTENTS DE FICHIERS -->
         <intent>
             <action android:name="android.intent.action.GET_CONTENT" />
         </intent>
